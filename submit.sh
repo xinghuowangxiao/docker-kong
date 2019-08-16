@@ -75,6 +75,7 @@ git checkout master
 git merge upstream/master
 
 git checkout -b release/$version
+prevcommit=5605ef3e52111bb4edfa48def7aee19ada9bf8fb
 
 if [ "$mode" = "patch" ]
 then
