@@ -26,7 +26,7 @@ KONG_DOCKER_TAG=kong:1.0 docker stack deploy -c docker-compose.yml kong
 until docker ps | grep kong:1.0 | grep -q healthy;  do
   docker stack ps kong
   docker service ps kong_kong
-  sleep 20
+  sleep 40
 done
 
 KONG_DOCKER_TAG=${KONG_DOCKER_TAG} docker stack deploy -c docker-compose.yml kong
@@ -34,7 +34,8 @@ sleep 20
 until docker ps | grep ${KONG_DOCKER_TAG}:latest | grep -q healthy; do
   docker stack ps kong
   docker service ps kong_kong
-  sleep 20
+  docker service logs kong_kong
+  sleep 40
 done
 
 sleep 20
