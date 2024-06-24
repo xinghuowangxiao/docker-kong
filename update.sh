@@ -3,17 +3,15 @@ set -e
 
 if ! [ "$1" ]
 then
-   echo "usage: $0 <version> [<prev_tag>]"
-   echo "example: $0 1.2.3 1.2.2"
+   echo "usage: $0 <version>"
+   echo "example: $0 1.2.3"
    exit 1
 fi
 
 version=$1
-prev_tag=$2
 
-if [ "$prev_tag" = "" ]
-then
-   prev_tag=master
+if [[ "$version" =~ "rc" ]]; then
+  version="${version//-}"
 fi
 
 function red() {
@@ -27,47 +25,68 @@ function die() {
    exit 1
 }
 
+# get kong url from dockerfile
+# and fill it up with needed args
+function get_url() {
+  dockerfile=$1
+  arch=$2
+  args=$3
+
+  eval $args
+
+  raw_url=$(egrep -o 'https?://packages.konghq.com/public/gateway-[^ ]+' $dockerfile | sed 's/\"//g')
+
+  # set variables contained in raw url
+  KONG_VERSION=$version
+  KONG_REPO=$(echo ${KONG_VERSION%.*} | sed 's/\.//')
+  ARCH=$arch
+
+  eval echo $raw_url
+}
+
+
 hub --version &> /dev/null || die "hub is not in PATH. Get it from https://github.com/github/hub"
 
-pushd alpine
-   ./build-ce.sh
-   mv /tmp/kong.tar.gz /tmp/kong.tar.gz.old
-   old_sha=$(sha256sum /tmp/kong.tar.gz.old | cut -b1-64)
-   VERSION=$version ./build-ce.sh || true
-   mv /tmp/kong.tar.gz /tmp/kong.tar.gz.new
-   new_sha=$(sha256sum /tmp/kong.tar.gz.new | cut -b1-64)
-   
-   sed -i -e 's/'$old_sha'/'$new_sha'/g' build-ce.sh
-   rm /tmp/kong.tar.gz.*
+#kbt_in_kong_v=$(curl -sL https://raw.githubusercontent.com/Kong/kong/$version/.requirements | grep 'KONG_BUILD_TOOLS_VERSION\=' | awk -F"=" '{print $2}' | tr -d "'[:space:]")
+kbt_in_kong_v=4.33.19
+if [[ -n "$kbt_in_kong_v" ]]; then
+  sed -i.bak 's/KONG_BUILD_TOOLS?=.*/KONG_BUILD_TOOLS?='$kbt_in_kong_v'/g' Makefile
+fi
+
+# Dockerfile.deb
+url=$(get_url Dockerfile.rpm amd64 "VERSION=8")
+echo $url
+curl -fL $url -o /tmp/kong
+new_sha=$(sha256sum /tmp/kong | cut -b1-64)
+
+sed -i.bak 's/ARG KONG_SHA256=.*/ARG KONG_SHA256=\"'$new_sha'\"/g' Dockerfile.rpm
+sed -i.bak 's/ARG KONG_VERSION=.*/ARG KONG_VERSION='$version'/g' Dockerfile.rpm
+
+pushd ubuntu
+   url=$(get_url Dockerfile amd64 "UBUNTU_CODENAME=jammy")
+   echo $url
+   curl -fL $url -o /tmp/kong
+   new_sha=$(sha256sum /tmp/kong | cut -b1-64)
+
+   sed -i.bak 's/ARG KONG_AMD64_SHA=.*/ARG KONG_AMD64_SHA=\"'$new_sha'\"/g' Dockerfile
+
+   url=$(get_url Dockerfile arm64 "UBUNTU_CODENAME=jammy")
+   echo $url
+   curl -fL $url -o /tmp/kong
+   new_sha=$(sha256sum /tmp/kong | cut -b1-64)
+
+   sed -i.bak 's/ARG KONG_ARM64_SHA=.*/ARG KONG_ARM64_SHA=\"'$new_sha'\"/g' Dockerfile
+   sed -i.bak 's/ARG KONG_VERSION=.*/ARG KONG_VERSION='$version'/g' Dockerfile
 popd
 
-pushd centos
-   ./build-ce.sh
-   mv /tmp/kong.rpm /tmp/kong.rpm.old
-   old_sha=$(sha256sum /tmp/kong.rpm.old | cut -b1-64)
-   VERSION=$version ./build-ce.sh || true
-   mv /tmp/kong.rpm /tmp/kong.rpm.new
-   new_sha=$(sha256sum /tmp/kong.rpm.new | cut -b1-64)
-   
-   sed -i -e 's/'$old_sha'/'$new_sha'/g' build-ce.sh
-   rm /tmp/kong.rpm.*
-popd
+# Dockerfile.deb
+url=$(get_url Dockerfile.deb amd64 "CODENAME=bullseye")
+echo $url
+curl -fL $url -o /tmp/kong
+new_sha=$(sha256sum /tmp/kong | cut -b1-64)
 
-pushd rhel
-   ./build-ce.sh
-   mv /tmp/kong.rpm /tmp/kong.rpm.old
-   old_sha=$(sha256sum /tmp/kong.rpm.old | cut -b1-64)
-   VERSION=$version ./build-ce.sh || true
-   mv /tmp/kong.rpm /tmp/kong.rpm.new
-   new_sha=$(sha256sum /tmp/kong.rpm.new | cut -b1-64)
-   
-   sed -i -e 's/'$old_sha'/'$new_sha'/g' build-ce.sh
-   sed -i -e "s/$prev_tag/$version/" Dockerfile
-   
-   rm /tmp/kong.rpm.*
-popd
-
-sed -i -e "s/$prev_tag/$version/" */build-ce.sh
+sed -i.bak 's/ARG KONG_SHA256=.*/ARG KONG_SHA256=\"'$new_sha'\"/g' Dockerfile.deb
+sed -i.bak 's/ARG KONG_VERSION=.*/ARG KONG_VERSION='$version'/g' Dockerfile.deb
 
 echo "****************************************"
 git diff
